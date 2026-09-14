@@ -38,6 +38,11 @@ export function WorkflowCanvas() {
     addEdge,
     moveNode,
     pushHistory,
+    deleteNode,
+    duplicateNode,
+    setStartNode,
+    insertNodeBefore,
+    insertNodeAfter,
     selectNode,
     selectEdge,
     clearSelection,
@@ -55,6 +60,7 @@ export function WorkflowCanvas() {
   const [pendingEdge, setPendingEdge] = useState<{ fromNodeId: string; toNodeId: string } | null>(null);
   const [condition, setCondition] = useState('');
   const [priority, setPriority] = useState(1);
+  const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
 
   const nodeMap = useMemo(() => new Map(workflow.nodes.map((node) => [node.id, node])), [workflow.nodes]);
 
@@ -131,6 +137,19 @@ export function WorkflowCanvas() {
     };
   }, [moveNode, pushHistory, screenToWorld]);
 
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setContextMenu(null);
+    };
+    const closeOnPointerDown = () => setContextMenu(null);
+    window.addEventListener('keydown', closeOnEscape);
+    window.addEventListener('pointerdown', closeOnPointerDown);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+      window.removeEventListener('pointerdown', closeOnPointerDown);
+    };
+  }, []);
+
   const zoomAt = (factor: number, clientX?: number, clientY?: number) => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -173,8 +192,15 @@ export function WorkflowCanvas() {
       ref={wrapRef}
       className="canvas-wrap"
       onWheel={onWheel}
+      onContextMenu={(event) => {
+        if (!(event.target as HTMLElement).closest('.workflow-node')) {
+          event.preventDefault();
+          setContextMenu(null);
+        }
+      }}
       onPointerDown={(event) => {
         if (event.button !== 0 || event.target !== event.currentTarget) return;
+        setContextMenu(null);
         clearSelection();
         panRef.current = {
           startClientX: event.clientX,
@@ -201,6 +227,7 @@ export function WorkflowCanvas() {
         onPointerDown={(event) => {
           if (event.target === event.currentTarget) {
             event.stopPropagation();
+            setContextMenu(null);
             clearSelection();
             panRef.current = {
               startClientX: event.clientX,
@@ -208,6 +235,7 @@ export function WorkflowCanvas() {
               startX: viewport.x,
               startY: viewport.y,
             };
+            document.body.classList.add('dragging-canvas');
           }
         }}
       >
@@ -250,9 +278,60 @@ export function WorkflowCanvas() {
               event.stopPropagation();
               finishConnection(node.id);
             }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              selectNode(node.id);
+              setContextMenu({
+                nodeId: node.id,
+                x: Math.min(event.clientX, window.innerWidth - 210),
+                y: Math.min(event.clientY, window.innerHeight - 290),
+              });
+            }}
           />
         ))}
       </div>
+
+      {contextMenu && nodeMap.has(contextMenu.nodeId) && (
+        <div
+          className="node-context-menu"
+          role="menu"
+          aria-label="Действия с нодой"
+          style={{ left: Math.max(8, contextMenu.x), top: Math.max(8, contextMenu.y) }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <strong>{nodeMap.get(contextMenu.nodeId)?.name}</strong>
+          <button role="menuitem" onClick={() => {
+            duplicateNode(contextMenu.nodeId);
+            setContextMenu(null);
+          }}>Дублировать</button>
+          <button role="menuitem" onClick={() => {
+            setStartNode(contextMenu.nodeId);
+            setContextMenu(null);
+          }}>Сделать стартовой</button>
+          <button role="menuitem" onClick={() => {
+            insertNodeBefore(contextMenu.nodeId);
+            setContextMenu(null);
+          }}>Добавить ноду до</button>
+          <button role="menuitem" onClick={() => {
+            insertNodeAfter(contextMenu.nodeId);
+            setContextMenu(null);
+          }}>Добавить ноду после</button>
+          <div className="context-menu-separator" />
+          <button className="danger" role="menuitem" onClick={() => {
+            if (window.confirm('Удалить выбранную ноду и связанные с ней связи?')) {
+              deleteNode(contextMenu.nodeId);
+            }
+            setContextMenu(null);
+          }}>Удалить</button>
+          <button className="danger" role="menuitem" onClick={() => {
+            if (window.confirm('Удалить ноду и переподключить входящую и исходящую связи?')) {
+              deleteNode(contextMenu.nodeId, true);
+            }
+            setContextMenu(null);
+          }}>Удалить и переподключить</button>
+        </div>
+      )}
 
       <div className="canvas-controls">
         <button onClick={() => zoomAt(1 / 1.15)}>−</button>

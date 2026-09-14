@@ -5,18 +5,22 @@ import { useDesigner } from '../state/DesignerContext';
 import { ExecutionPanel } from './ExecutionPanel';
 import { ValidationPanel } from './ValidationPanel';
 
-type Tab = 'properties' | 'runtime' | 'json';
+export type InspectorTab = 'properties' | 'runtime' | 'json';
 
-export function Inspector() {
+interface InspectorProps {
+  tab: InspectorTab;
+  onTabChange(tab: InspectorTab): void;
+}
+
+export function Inspector({ tab, onTabChange }: InspectorProps) {
   const designer = useDesigner();
-  const [tab, setTab] = useState<Tab>('properties');
 
   return (
     <aside className="inspector">
       <div className="inspector-tabs">
-        <button className={tab === 'properties' ? 'active' : ''} onClick={() => setTab('properties')}>Properties</button>
-        <button className={tab === 'runtime' ? 'active' : ''} onClick={() => setTab('runtime')}>Runtime</button>
-        <button className={tab === 'json' ? 'active' : ''} onClick={() => setTab('json')}>JSON</button>
+        <button className={tab === 'properties' ? 'active' : ''} onClick={() => onTabChange('properties')}>Properties</button>
+        <button className={tab === 'runtime' ? 'active' : ''} onClick={() => onTabChange('runtime')}>Runtime</button>
+        <button className={tab === 'json' ? 'active' : ''} onClick={() => onTabChange('json')}>JSON</button>
       </div>
 
       <div className="inspector-body">
@@ -68,7 +72,7 @@ function NodeEditor({ node }: { node: WorkflowNode }) {
     setScriptTimeout(Number(node.config.timeoutMs ?? 1500));
     setScriptSource(String(node.config.scriptSource ?? ''));
     setScriptTestResult(null);
-  }, [node]);
+  }, [node.id, node.type]);
 
   const scriptMode = type === 'Script';
 
@@ -94,9 +98,10 @@ function NodeEditor({ node }: { node: WorkflowNode }) {
       <label>Type
         <select value={type} onChange={(event) => {
           const nextType = event.target.value as WorkflowNodeType;
+          const defaults = defaultConfigForType(nextType);
           setType(nextType);
-          if (nextType === 'Script' && !scriptSource) {
-            const defaults = defaultConfigForType('Script');
+          setConfigText(JSON.stringify(defaults, null, 2));
+          if (nextType === 'Script') {
             setScriptInput(String(defaults.input ?? ''));
             setScriptOutput(String(defaults.output ?? ''));
             setScriptTimeout(Number(defaults.timeoutMs ?? 1500));
@@ -159,7 +164,7 @@ function EdgeEditor() {
   useEffect(() => {
     setCondition(edge.condition ?? '');
     setPriority(edge.priority);
-  }, [edge]);
+  }, [edge.id]);
 
   const from = useMemo(() => designer.workflow.nodes.find((node) => node.id === edge.fromNodeId), [designer.workflow.nodes, edge.fromNodeId]);
   const to = useMemo(() => designer.workflow.nodes.find((node) => node.id === edge.toNodeId), [designer.workflow.nodes, edge.toNodeId]);

@@ -79,6 +79,10 @@ function cloneWorkflow(workflow: WorkflowDefinition): WorkflowDefinition {
   return structuredClone(workflow);
 }
 
+function workflowFingerprint(workflow: WorkflowDefinition) {
+  return JSON.stringify(workflow);
+}
+
 function snap(value: number) {
   return Math.round(value / GRID_SIZE) * GRID_SIZE;
 }
@@ -87,9 +91,19 @@ function uid(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+function uniqueNodeKey(base: string, workflow: WorkflowDefinition) {
+  const keys = new Set(workflow.nodes.map((node) => node.key));
+  if (!keys.has(base)) return base;
+
+  let suffix = 2;
+  while (keys.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
 export function DesignerProvider({ children }: PropsWithChildren) {
   const [workflow, setWorkflow] = useState<WorkflowDefinition>(() => createDemoWorkflow());
   const workflowRef = useRef(workflow);
+  const cleanWorkflowFingerprint = useRef(workflowFingerprint(workflow));
   workflowRef.current = workflow;
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -111,18 +125,23 @@ export function DesignerProvider({ children }: PropsWithChildren) {
     undoStack.current.push(cloneWorkflow(workflowRef.current));
     if (undoStack.current.length > 100) undoStack.current.shift();
     redoStack.current = [];
+    autoToken.current += 1;
+    setAutoRunning(false);
+    if (executionRef.current.status !== 'idle') {
+      const idle = engine.createIdleState();
+      executionRef.current = idle;
+      setExecution(idle);
+    }
     setHistoryVersion((value) => value + 1);
-    setDirty(true);
   }, []);
 
   const commit = useCallback((mutator: (draft: WorkflowDefinition) => void) => {
     pushHistory();
-    setWorkflow((current) => {
-      const next = cloneWorkflow(current);
-      mutator(next);
-      workflowRef.current = next;
-      return next;
-    });
+    const next = cloneWorkflow(workflowRef.current);
+    mutator(next);
+    workflowRef.current = next;
+    setWorkflow(next);
+    setDirty(workflowFingerprint(next) !== cleanWorkflowFingerprint.current);
     setValidationIssues(null);
   }, [pushHistory]);
 
@@ -131,13 +150,21 @@ export function DesignerProvider({ children }: PropsWithChildren) {
       id: uid('node'),
       type,
       name: type,
-      key: `${type.toLowerCase()}-${Date.now().toString(36)}`,
+      key: uniqueNodeKey(`${type.toLowerCase()}-${Date.now().toString(36)}`, workflowRef.current),
       config: defaultConfigForType(type),
       positionX: snapEnabled ? snap(x) : x,
       positionY: snapEnabled ? snap(y) : y,
     };
 
     commit((draft) => {
+      if (type === 'Start') {
+        draft.nodes.forEach((item) => {
+          if (item.type === 'Start') {
+            item.type = 'Join';
+            item.config = {};
+          }
+        });
+      }
       draft.nodes.push(node);
       if (!draft.startNodeId || type === 'Start') draft.startNodeId = node.id;
     });
@@ -149,7 +176,21 @@ export function DesignerProvider({ children }: PropsWithChildren) {
   const updateNode = useCallback((id: string, patch: Partial<WorkflowNode>) => {
     commit((draft) => {
       const node = draft.nodes.find((item) => item.id === id);
-      if (node) Object.assign(node, structuredClone(patch));
+      if (!node) return;
+
+      if (patch.type === 'Start') {
+        draft.nodes.forEach((item) => {
+          if (item.id !== id && item.type === 'Start') {
+            item.type = 'Join';
+            item.config = {};
+          }
+        });
+        draft.startNodeId = id;
+      } else if (patch.type && draft.startNodeId === id) {
+        draft.startNodeId = null;
+      }
+
+      Object.assign(node, structuredClone(patch));
     });
   }, [commit]);
 
@@ -162,9 +203,9 @@ export function DesignerProvider({ children }: PropsWithChildren) {
         node.positionY = snapEnabled ? snap(y) : y;
       }
       workflowRef.current = next;
+      setDirty(workflowFingerprint(next) !== cleanWorkflowFingerprint.current);
       return next;
     });
-    setDirty(true);
   }, [snapEnabled]);
 
   const deleteNode = useCallback((id: string, reconnect = false) => {
@@ -182,16 +223,20 @@ export function DesignerProvider({ children }: PropsWithChildren) {
       draft.edges = draft.edges.filter((edge) => edge.fromNodeId !== id && edge.toNodeId !== id);
 
       if (reconnect && incoming.length === 1 && outgoing.length === 1) {
-        draft.edges.push({
-          id: uid('edge'),
-          fromNodeId: incoming[0].fromNodeId,
-          toNodeId: outgoing[0].toNodeId,
-          condition: outgoing[0].condition,
-          priority: outgoing[0].priority,
-        });
+        if (incoming[0].fromNodeId !== outgoing[0].toNodeId) {
+          draft.edges.push({
+            id: uid('edge'),
+            fromNodeId: incoming[0].fromNodeId,
+            toNodeId: outgoing[0].toNodeId,
+            condition: outgoing[0].condition,
+            priority: outgoing[0].priority,
+          });
+        }
       }
 
-      if (draft.startNodeId === id) draft.startNodeId = draft.nodes[0]?.id ?? null;
+      if (draft.startNodeId === id) {
+        draft.startNodeId = draft.nodes.find((node) => node.type === 'Start')?.id ?? null;
+      }
     });
     setSelectedNodeId(null);
   }, [commit]);
@@ -202,7 +247,11 @@ export function DesignerProvider({ children }: PropsWithChildren) {
     const copy = structuredClone(source);
     copy.id = uid('node');
     copy.name = `${source.name} Copy`;
-    copy.key = `${source.key}-copy`;
+    copy.key = uniqueNodeKey(`${source.key}-copy`, workflowRef.current);
+    if (copy.type === 'Start') {
+      copy.type = 'Join';
+      copy.config = {};
+    }
     copy.positionX += GRID_SIZE * 2;
     copy.positionY += GRID_SIZE * 2;
     commit((draft) => draft.nodes.push(copy));
@@ -210,15 +259,26 @@ export function DesignerProvider({ children }: PropsWithChildren) {
   }, [commit]);
 
   const setStartNode = useCallback((id: string) => {
+    if (!workflowRef.current.nodes.some((item) => item.id === id)) return;
     commit((draft) => {
       draft.startNodeId = id;
-      const node = draft.nodes.find((item) => item.id === id);
-      if (node) node.type = 'Start';
+      draft.nodes.forEach((node) => {
+        if (node.id === id) {
+          node.type = 'Start';
+          node.config = {};
+        } else if (node.type === 'Start') {
+          node.type = 'Join';
+          node.config = {};
+        }
+      });
     });
   }, [commit]);
 
   const addEdge = useCallback((fromNodeId: string, toNodeId: string, condition: string | null = null, priority = 1) => {
     if (fromNodeId === toNodeId) return;
+    if (!Number.isFinite(priority)) return;
+    const nodeIds = new Set(workflowRef.current.nodes.map((node) => node.id));
+    if (!nodeIds.has(fromNodeId) || !nodeIds.has(toNodeId)) return;
     const exists = workflowRef.current.edges.some((edge) => edge.fromNodeId === fromNodeId && edge.toNodeId === toNodeId && edge.condition === condition);
     if (exists) return;
     commit((draft) => draft.edges.push({ id: uid('edge'), fromNodeId, toNodeId, condition, priority }));
@@ -314,29 +374,37 @@ export function DesignerProvider({ children }: PropsWithChildren) {
   const undo = useCallback(() => {
     const previous = undoStack.current.pop();
     if (!previous) return;
+    autoToken.current += 1;
+    setAutoRunning(false);
     redoStack.current.push(cloneWorkflow(workflowRef.current));
     workflowRef.current = previous;
     setWorkflow(previous);
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setValidationIssues(null);
-    setExecution(engine.createIdleState());
+    const idle = engine.createIdleState();
+    executionRef.current = idle;
+    setExecution(idle);
     setHistoryVersion((value) => value + 1);
-    setDirty(true);
+    setDirty(workflowFingerprint(previous) !== cleanWorkflowFingerprint.current);
   }, []);
 
   const redo = useCallback(() => {
     const next = redoStack.current.pop();
     if (!next) return;
+    autoToken.current += 1;
+    setAutoRunning(false);
     undoStack.current.push(cloneWorkflow(workflowRef.current));
     workflowRef.current = next;
     setWorkflow(next);
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setValidationIssues(null);
-    setExecution(engine.createIdleState());
+    const idle = engine.createIdleState();
+    executionRef.current = idle;
+    setExecution(idle);
     setHistoryVersion((value) => value + 1);
-    setDirty(true);
+    setDirty(workflowFingerprint(next) !== cleanWorkflowFingerprint.current);
   }, []);
 
   const validate = useCallback(() => {
@@ -355,32 +423,45 @@ export function DesignerProvider({ children }: PropsWithChildren) {
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setValidationIssues(null);
-    setExecution(engine.createIdleState());
+    const idle = engine.createIdleState();
+    executionRef.current = idle;
+    setExecution(idle);
+    setDirty(workflowFingerprint(next) !== cleanWorkflowFingerprint.current);
   }, [pushHistory]);
 
   const importWorkflow = useCallback((next: WorkflowDefinition) => {
-    workflowRef.current = structuredClone(next);
-    setWorkflow(structuredClone(next));
+    const imported = structuredClone(next);
+    autoToken.current += 1;
+    setAutoRunning(false);
+    workflowRef.current = imported;
+    setWorkflow(imported);
     undoStack.current = [];
     redoStack.current = [];
     setHistoryVersion((value) => value + 1);
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setValidationIssues(null);
-    setExecution(engine.createIdleState());
+    const idle = engine.createIdleState();
+    executionRef.current = idle;
+    setExecution(idle);
+    cleanWorkflowFingerprint.current = workflowFingerprint(imported);
     setDirty(false);
   }, []);
 
   const startExecution = useCallback(async () => {
-    autoToken.current += 1;
+    const token = ++autoToken.current;
     setAutoRunning(false);
     const next = await engine.start(workflowRef.current);
+    if (token !== autoToken.current) return;
     executionRef.current = next;
     setExecution(next);
   }, []);
 
   const nextExecutionStep = useCallback(async () => {
+    const token = ++autoToken.current;
+    setAutoRunning(false);
     const next = await engine.step(workflowRef.current, executionRef.current);
+    if (token !== autoToken.current) return;
     executionRef.current = next;
     setExecution(next);
   }, []);
@@ -406,6 +487,7 @@ export function DesignerProvider({ children }: PropsWithChildren) {
     let state = executionRef.current;
     if (state.status === 'idle' || state.status === 'completed' || state.status === 'failed') {
       state = await engine.start(workflowRef.current);
+      if (token !== autoToken.current) return;
       executionRef.current = state;
       setExecution(state);
     }
@@ -470,7 +552,10 @@ export function DesignerProvider({ children }: PropsWithChildren) {
     validate,
     resetWorkflow,
     importWorkflow,
-    markClean: () => setDirty(false),
+    markClean: () => {
+      cleanWorkflowFingerprint.current = workflowFingerprint(workflowRef.current);
+      setDirty(false);
+    },
     toggleSnap: () => setSnapEnabled((value) => !value),
     startExecution,
     nextExecutionStep,

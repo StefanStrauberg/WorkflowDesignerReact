@@ -3,7 +3,7 @@ import { DesignerProvider, useDesigner } from '../features/designer/state/Design
 import { Toolbar } from '../features/designer/components/Toolbar';
 import { NodePalette } from '../features/designer/components/NodePalette';
 import { WorkflowCanvas } from '../features/designer/components/WorkflowCanvas';
-import { Inspector } from '../features/designer/components/Inspector';
+import { Inspector, type InspectorTab } from '../features/designer/components/Inspector';
 
 export function App() {
   return (
@@ -17,6 +17,12 @@ function DesignerShell() {
   const designer = useDesigner();
   const [paletteVisible, setPaletteVisible] = useState(true);
   const [inspectorVisible, setInspectorVisible] = useState(true);
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('properties');
+
+  const showRuntime = () => {
+    setInspectorVisible(true);
+    setInspectorTab('runtime');
+  };
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -88,6 +94,7 @@ function DesignerShell() {
         inspectorVisible={inspectorVisible}
         onTogglePalette={() => setPaletteVisible((value) => !value)}
         onToggleInspector={() => setInspectorVisible((value) => !value)}
+        onShowRuntime={showRuntime}
       />
 
       <div
@@ -95,7 +102,7 @@ function DesignerShell() {
       >
         {paletteVisible && <NodePalette />}
         <WorkflowCanvas />
-        {inspectorVisible && <Inspector />}
+        {inspectorVisible && <Inspector tab={inspectorTab} onTabChange={setInspectorTab} />}
       </div>
     </div>
   );

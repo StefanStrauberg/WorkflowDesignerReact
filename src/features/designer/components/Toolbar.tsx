@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import type { WorkflowDefinition } from '../../../domain/workflow/model';
+import { isWorkflowDefinition } from '../../../domain/workflow/model';
 import { useDesigner } from '../state/DesignerContext';
 
 interface Props {
@@ -7,9 +7,10 @@ interface Props {
   inspectorVisible: boolean;
   onTogglePalette(): void;
   onToggleInspector(): void;
+  onShowRuntime(): void;
 }
 
-export function Toolbar({ paletteVisible, inspectorVisible, onTogglePalette, onToggleInspector }: Props) {
+export function Toolbar({ paletteVisible, inspectorVisible, onTogglePalette, onToggleInspector, onShowRuntime }: Props) {
   const designer = useDesigner();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -20,7 +21,7 @@ export function Toolbar({ paletteVisible, inspectorVisible, onTogglePalette, onT
     anchor.href = url;
     anchor.download = `${designer.workflow.name.replace(/\s+/g, '-').toLowerCase() || 'workflow'}.json`;
     anchor.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
     designer.markClean();
   };
 
@@ -32,13 +33,28 @@ export function Toolbar({ paletteVisible, inspectorVisible, onTogglePalette, onT
       <button className="primary" onClick={() => designer.addNode('Script', 300, 250)}>+ Node</button>
       <button disabled={!designer.canUndo} onClick={designer.undo}>↶ Undo</button>
       <button disabled={!designer.canRedo} onClick={designer.redo}>↷ Redo</button>
-      <button onClick={designer.validate}>Проверить граф</button>
+      <button onClick={() => {
+        designer.validate();
+        onShowRuntime();
+      }}>Проверить граф</button>
       <button onClick={designer.toggleSnap}>Snap: {designer.snapEnabled ? 'ON' : 'OFF'}</button>
       <span className="toolbar-separator" />
-      <button onClick={() => void designer.startExecution()}>▶ Старт</button>
-      <button onClick={() => void designer.nextExecutionStep()}>Следующий шаг</button>
-      <button onClick={() => void designer.toggleAutoExecution()}>{designer.autoRunning ? 'Стоп' : 'Авто'}</button>
-      <button onClick={designer.resetExecution}>Сброс</button>
+      <button onClick={() => {
+        onShowRuntime();
+        void designer.startExecution();
+      }}>▶ Старт</button>
+      <button onClick={() => {
+        onShowRuntime();
+        void designer.nextExecutionStep();
+      }}>Следующий шаг</button>
+      <button onClick={() => {
+        onShowRuntime();
+        void designer.toggleAutoExecution();
+      }}>{designer.autoRunning ? 'Стоп' : 'Авто'}</button>
+      <button onClick={() => {
+        designer.resetExecution();
+        onShowRuntime();
+      }}>Сброс</button>
       <span className="toolbar-separator" />
       <button onClick={exportJson}>Экспорт JSON</button>
       <button onClick={() => fileRef.current?.click()}>Импорт JSON</button>
@@ -51,8 +67,8 @@ export function Toolbar({ paletteVisible, inspectorVisible, onTogglePalette, onT
           const file = event.target.files?.[0];
           if (!file) return;
           try {
-            const parsed = JSON.parse(await file.text()) as WorkflowDefinition;
-            if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) throw new Error('Invalid workflow');
+            const parsed: unknown = JSON.parse(await file.text());
+            if (!isWorkflowDefinition(parsed)) throw new Error('Invalid workflow');
             designer.importWorkflow(parsed);
           } catch {
             window.alert('Некорректный JSON workflow.');

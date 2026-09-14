@@ -11,10 +11,22 @@ export function validateWorkflow(workflow: WorkflowDefinition): ValidationIssue[
 
   if (!workflow.nodes.length) addError('workflow.empty', 'Workflow не содержит Node.');
 
+  const duplicateValues = (values: string[]) =>
+    [...new Set(values.filter((value, index) => values.indexOf(value) !== index))];
+
+  duplicateValues(workflow.nodes.map((node) => node.id)).forEach((id) =>
+    addError('node.id.duplicate', `Идентификатор Node "${id}" используется несколько раз.`, { nodeId: id }));
+  duplicateValues(workflow.nodes.map((node) => node.key)).forEach((key) =>
+    addError('node.key.duplicate', `Key Node "${key}" используется несколько раз.`));
+  duplicateValues(workflow.edges.map((edge) => edge.id)).forEach((id) =>
+    addError('edge.id.duplicate', `Идентификатор Edge "${id}" используется несколько раз.`, { edgeId: id }));
+
   if (!workflow.startNodeId) {
     addError('start.missing', 'Не задан startNodeId.');
   } else if (!nodeIds.has(workflow.startNodeId)) {
     addError('start.invalid', 'startNodeId указывает на несуществующую Node.');
+  } else if (workflow.nodes.find((node) => node.id === workflow.startNodeId)?.type !== 'Start') {
+    addError('start.type.invalid', 'startNodeId должен указывать на Node типа Start.', { nodeId: workflow.startNodeId });
   }
 
   const startNodes = workflow.nodes.filter((node) => node.type === 'Start');
@@ -25,7 +37,15 @@ export function validateWorkflow(workflow: WorkflowDefinition): ValidationIssue[
     if (!nodeIds.has(edge.fromNodeId)) addError('edge.from.invalid', `Edge ${edge.id}: fromNodeId не существует.`, { edgeId: edge.id });
     if (!nodeIds.has(edge.toNodeId)) addError('edge.to.invalid', `Edge ${edge.id}: toNodeId не существует.`, { edgeId: edge.id });
     if (edge.fromNodeId === edge.toNodeId) addWarning('edge.self', `Edge ${edge.id}: Node соединена сама с собой.`, { edgeId: edge.id });
+    if (!Number.isFinite(edge.priority)) addError('edge.priority.invalid', `Edge ${edge.id}: Priority должна быть конечным числом.`, { edgeId: edge.id });
   }
+
+
+  const edgeSignatures = workflow.edges.map((edge) => `${edge.fromNodeId}\u0000${edge.toNodeId}\u0000${edge.condition ?? ''}`);
+  duplicateValues(edgeSignatures).forEach((signature) => {
+    const edge = workflow.edges[edgeSignatures.indexOf(signature)];
+    addWarning('edge.duplicate', `Связь ${edge.fromNodeId} → ${edge.toNodeId} с такой Condition продублирована.`, { edgeId: edge.id });
+  });
 
   const outgoing = (nodeId: string) => workflow.edges.filter((edge) => edge.fromNodeId === nodeId);
 

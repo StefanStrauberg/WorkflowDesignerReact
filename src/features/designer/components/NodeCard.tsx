@@ -1,4 +1,4 @@
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { WorkflowNode } from '../../../domain/workflow/model';
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   onDragStart(event: ReactPointerEvent<HTMLDivElement>): void;
   onOutputStart(event: ReactPointerEvent<HTMLButtonElement>): void;
   onInputFinish(event: ReactPointerEvent<HTMLButtonElement>): void;
+  onContextMenu(event: ReactMouseEvent<HTMLDivElement>): void;
 }
 
 export function NodeCard({
@@ -23,6 +24,7 @@ export function NodeCard({
   onDragStart,
   onOutputStart,
   onInputFinish,
+  onContextMenu,
 }: Props) {
   return (
     <div
@@ -35,6 +37,7 @@ export function NodeCard({
       ].filter(Boolean).join(' ')}
       style={{ left: node.positionX, top: node.positionY }}
       onPointerDown={onDragStart}
+      onContextMenu={onContextMenu}
       onClick={(event) => {
         event.stopPropagation();
         onSelect();
@@ -73,6 +76,6 @@ function summarizeConfig(config: Record<string, unknown>) {
 }
 
 function shortValue(value: unknown) {
-  const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+  const serialized = typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value));
   return serialized.length > 28 ? `${serialized.slice(0, 25)}…` : serialized;
 }

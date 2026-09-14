@@ -157,7 +157,17 @@ export class WorkflowEngine {
 
     if (!outgoing.length) return { edge: null, why: 'У текущей Node нет исходящих Edge.' };
 
-    if (result?.decision != null) {
+    if (node.type === 'Decision') {
+      if (result?.decision == null) {
+        const fallback = outgoing.find((edge) => edge.condition === 'DEFAULT');
+        if (fallback) return { edge: fallback, why: 'Decision не вернула значение, поэтому выбран DEFAULT.' };
+
+        const unconditional = outgoing.find((edge) => !edge.condition);
+        if (unconditional) return { edge: unconditional, why: 'Decision не вернула значение, выбран безусловный Edge.' };
+
+        return { edge: null, why: 'Decision не вернула значение и не имеет DEFAULT-ветки.' };
+      }
+
       const exact = outgoing.find((edge) => edge.condition === result.decision);
       if (exact) return { edge: exact, why: `Decision='${result.decision}' совпал с Condition='${exact.condition}'.` };
 

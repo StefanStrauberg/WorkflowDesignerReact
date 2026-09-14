@@ -3,24 +3,32 @@ export function normalizeContextPath(path: string | null | undefined): string {
   return path.trim().replace(/^\$\./, '').replace(/^\$/, '');
 }
 
-export function getContextPath(source: unknown, path: string | null | undefined): unknown {
-  const normalized = normalizeContextPath(path);
-  if (!normalized) return source;
+const FORBIDDEN_PATH_PARTS = new Set(['__proto__', 'prototype', 'constructor']);
 
-  return normalized
-    .split('.')
-    .filter(Boolean)
-    .reduce<unknown>((current, key) => {
+function contextPathParts(path: string | null | undefined): string[] {
+  const normalized = normalizeContextPath(path);
+  if (!normalized) return [];
+
+  const parts = normalized.split('.').filter(Boolean);
+  if (parts.some((part) => FORBIDDEN_PATH_PARTS.has(part))) {
+    throw new Error(`Недопустимый сегмент Context path: "${path}".`);
+  }
+  return parts;
+}
+
+export function getContextPath(source: unknown, path: string | null | undefined): unknown {
+  const parts = contextPathParts(path);
+  if (!parts.length) return source;
+
+  return parts.reduce<unknown>((current, key) => {
       if (current == null || typeof current !== 'object') return undefined;
       return (current as Record<string, unknown>)[key];
     }, source);
 }
 
 export function setContextPath(target: Record<string, unknown>, path: string, value: unknown): void {
-  const normalized = normalizeContextPath(path);
-  if (!normalized) return;
-
-  const parts = normalized.split('.').filter(Boolean);
+  const parts = contextPathParts(path);
+  if (!parts.length) return;
   let current: Record<string, unknown> = target;
 
   for (let index = 0; index < parts.length - 1; index += 1) {
